@@ -77,7 +77,13 @@ def _api_key() -> str:
     if not parameter_name:
         raise ChatDisabled
 
-    result = _ssm_client().get_parameter(Name=parameter_name, WithDecryption=True)
+    try:
+        result = _ssm_client().get_parameter(Name=parameter_name, WithDecryption=True)
+    except Exception as exc:
+        code = getattr(exc, "response", {}).get("Error", {}).get("Code", "unknown")
+        safe_code = code if code in {"AccessDeniedException", "ParameterNotFound", "InvalidKeyId", "ThrottlingException"} else "unknown"
+        logger.error("Key retrieval failed: code=%s", safe_code)
+        raise LLMUnavailable from exc
     value = result.get("Parameter", {}).get("Value", "")
     if not isinstance(value, str) or not value:
         raise ChatDisabled
@@ -161,7 +167,18 @@ def _call_llm(prompt: str) -> str:
     try:
         with urllib.request.urlopen(request, timeout=OPENAI_TIMEOUT_SECONDS) as result:
             response_payload = json.loads(result.read())
+    except urllib.error.HTTPError as exc:
+        safe_code = "unknown"
+        try:
+            code = json.loads(exc.read(16_384)).get("error", {}).get("code")
+            if code in {"invalid_api_key", "insufficient_quota", "rate_limit_exceeded", "model_not_found", "credit_balance_exhausted", "organization_spend_limit_exceeded", "project_spend_limit_exceeded", "organization_usage_limit_exceeded", "ip_not_authorized"}:
+                safe_code = code
+        except (ValueError, AttributeError, TypeError):
+            pass
+        logger.error("Provider HTTP failure: status=%s code=%s", exc.code, safe_code)
+        raise LLMUnavailable from exc
     except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        logger.error("Provider transport or JSON failure.")
         raise LLMUnavailable from exc
 
     try:

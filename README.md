@@ -6,15 +6,19 @@ the adjacent `config.js` with the deployed API URL.
 
 ## Status
 
-Work in progress, not a completed assignment submission.
+The deployed website and chat are working. Submission checks listed below remain.
 
 - Verified on AWS: unchanged frontend over HTTPS, generated configuration, and
-  `GET /history` returning an empty JSON array with the correct CORS origin.
-- Chat is enabled in the development deployment, but the live `POST /chat` test
-  returned HTTP 502. Key-access/provider diagnostics and successful persistence
-  verification remain outstanding.
-- CloudWatch logs and error alarms are provisioned. Alarm transitions, browser
-  interaction, clean-account deployment, and complete teardown are not verified.
+  `GET /history` returning JSON with the correct CORS origin (initially empty).
+- After API key rotation, the live `POST /chat` test returned HTTP 200 using
+  `gpt-4.1-mini`. The earlier HTTP 502 was no longer reproduced. Its original
+  cause was not conclusively identified.
+- Verified that the successful test exchange was persisted and returned by
+  `GET /history`, with the expected browser CORS origin.
+- Browser verification: the project owner confirmed the website and chat work
+  on October 2, 2026.
+- CloudWatch logs and error alarms are provisioned. Alarm transitions,
+  clean-account deployment, and complete teardown are not verified.
 - No CI/CD deployment workflow is configured yet.
 
 ## Architecture and choices
@@ -76,6 +80,9 @@ not prove that chat works. The default model is `gpt-4.1-mini`; set
 Omitting `--enable-chat` explicitly selects history-only mode; it is not a safe
 way to preserve an already-enabled chat deployment. Keep `--enable-chat` on
 subsequent deployments. For key rotation, also increment `TF_VAR_llm_key_version`.
+Keep that version stable on later deployments; increment it only for another
+rotation. Changing the version refreshes Lambda processes so they do not keep
+using a cached old key. The version is not the secret itself.
 
 ## API and tests
 
@@ -119,9 +126,9 @@ add authentication and per-user history, indexed/paginated history, spending
 controls, improved redacted diagnostics, notification destinations for alarms,
 and CI with short-lived GitHub OIDC credentials rather than stored AWS keys.
 
-Before submission: resolve the live chat failure, verify persistence/reload and
-failure behavior, rehearse a clean deployment and teardown, and record actual
-time spent. Actual engineering time has not yet been recorded reliably.
+Before submission: verify browser history after reload and failure behavior,
+rehearse a clean deployment and teardown, and record actual time spent.
+Actual engineering time has not yet been recorded reliably.
 
 Only this README, Terraform, application/test code, deployment scripts, and
 dependency files are published. The assignment PDF, private planning documents,

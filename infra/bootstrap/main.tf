@@ -165,6 +165,12 @@ resource "aws_iam_role_policy" "terraform_deploy" {
         Resource = "*"
       },
       {
+        Sid      = "ReadDaveIoLambdaDiagnostics"
+        Effect   = "Allow"
+        Action   = ["logs:FilterLogEvents"]
+        Resource = "arn:${data.aws_partition.current.partition}:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${local.stack_resource_prefix}*:*"
+      },
+      {
         Sid      = "ManageDaveIoAlarms"
         Effect   = "Allow"
         Action   = ["cloudwatch:PutMetricAlarm", "cloudwatch:DeleteAlarms", "cloudwatch:DescribeAlarms", "cloudwatch:ListTagsForResource", "cloudwatch:TagResource", "cloudwatch:UntagResource"]

@@ -56,6 +56,8 @@ resource "aws_lambda_function" "app" {
       HISTORY_BUCKET = aws_s3_bucket.history.id
       LLM_PARAMETER  = var.enable_chat ? aws_ssm_parameter.llm_key[0].name : ""
       LLM_MODEL      = var.llm_model
+      # A version change recycles warm processes that cached the previous key.
+      LLM_KEY_VERSION = tostring(var.llm_key_version)
     }
   }
   depends_on = [aws_iam_role_policy.lambda, aws_cloudwatch_log_group.lambda]
