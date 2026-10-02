@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ask Dave</title>
+<!-- API base URL comes from config.js, generated at deploy time:
+     window.APP_CONFIG = { apiUrl: "https://..." }; -->
+<script src="config.js"></script>
+<style>
+  :root {
+    --bg: #eef1f5;
+    --panel: #ffffff;
+    --ink: #1c2430;
+    --muted: #5e6b7c;
+    --line: #d5dbe3;
+    --accent: #2451c7;
+    --accent-ink: #ffffff;
+    --error: #b42318;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  main { max-width: 720px; margin: 0 auto; padding: 40px 20px 60px; }
+  h1 { font-size: 28px; margin: 0 0 4px; letter-spacing: -0.02em; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .composer {
+    display: flex; gap: 8px;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 8px;
+  }
+  textarea {
+    flex: 1; border: 0; resize: vertical; min-height: 48px;
+    font: inherit; color: inherit; padding: 8px; outline: none; background: transparent;
+  }
+  button {
+    border: 0; border-radius: 8px; padding: 0 18px;
+    background: var(--accent); color: var(--accent-ink);
+    font: inherit; font-weight: 600; cursor: pointer;
+  }
+  button:disabled { opacity: 0.6; cursor: wait; }
+  button:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .status { min-height: 24px; margin: 10px 2px; color: var(--muted); font-size: 14px; }
+  .status.error { color: var(--error); }
+  h2 { font-size: 15px; color: var(--muted); font-weight: 600; margin: 28px 0 10px; }
+  .item {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 14px 16px; margin-bottom: 10px;
+  }
+  .q { font-weight: 600; margin: 0 0 6px; }
+  .a { margin: 0; white-space: pre-wrap; }
+  .t { color: var(--muted); font-size: 13px; margin-top: 8px; }
+  .empty { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Ask Dave</h1>
+  <p class="sub">Ask anything. Answers are saved and show up in the history below.</p>
+
+  <div class="composer">
+    <textarea id="prompt" placeholder="Type your question" aria-label="Your question"></textarea>
+    <button id="send">Send</button>
+  </div>
+  <div id="status" class="status" role="status"></div>
+
+  <h2>History</h2>
+  <div id="history"><p class="empty">Loading history...</p></div>
+</main>
+
+<script>
+  const cfg = window.APP_CONFIG || {};
+  const API = (cfg.apiUrl || "").replace(/\/+$/, "");
+  const $ = (id) => document.getElementById(id);
+
+  function esc(s) {
+    return String(s ?? "").replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  function setStatus(msg, isError) {
+    $("status").textContent = msg || "";
+    $("status").className = "status" + (isError ? " error" : "");
+  }
+
+  function render(items) {
+    if (!items || !items.length) {
+      $("history").innerHTML = '<p class="empty">No questions yet. Ask the first one above.</p>';
+      return;
+    }
+    $("history").innerHTML = items.map((i) => `
+      <div class="item">
+        <p class="q">${esc(i.prompt)}</p>
+        <p class="a">${esc(i.response)}</p>
+        <div class="t">${esc(i.timestamp ? new Date(i.timestamp).toLocaleString() : "")}</div>
+      </div>`).join("");
+  }
+
+  async function loadHistory() {
+    try {
+      const res = await fetch(`${API}/history`);
+      if (!res.ok) throw new Error(`GET /history returned ${res.status}`);
+      render(await res.json());
+    } catch (e) {
+      $("history").innerHTML = "";
+      setStatus(`Couldn't load history: ${e.message}`, true);
+    }
+  }
+
+  async function send() {
+    const prompt = $("prompt").value.trim();
+    if (!prompt) return;
+    $("send").disabled = true;
+    setStatus("Thinking...");
+    try {
+      const res = await fetch(`${API}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
+      if (!res.ok) throw new Error(`POST /chat returned ${res.status}`);
+      await res.json();
+      $("prompt").value = "";
+      setStatus("");
+      await loadHistory();
+    } catch (e) {
+      setStatus(`Couldn't send: ${e.message}`, true);
+    } finally {
+      $("send").disabled = false;
+    }
+  }
+
+  $("send").addEventListener("click", send);
+  $("prompt").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+  });
+
+  if (!API) setStatus("Missing config.js with window.APP_CONFIG.apiUrl", true);
+  else loadHistory();
+</script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+output "app_url" { value = "https://${aws_cloudfront_distribution.frontend.domain_name}" }
+output "api_url" { value = aws_apigatewayv2_api.app.api_endpoint }
+output "deployment_name" { value = local.name }
+output "history_bucket" { value = aws_s3_bucket.history.id }
+output "frontend_bucket" { value = aws_s3_bucket.frontend.id }
+output "function_name" { value = aws_lambda_function.app.function_name }
+output "parameter_name" { value = var.enable_chat ? aws_ssm_parameter.llm_key[0].name : null }
+output "http_error_alarm" { value = aws_cloudwatch_metric_alarm.http_errors.alarm_name }
+output "chat_enabled" { value = var.enable_chat }
