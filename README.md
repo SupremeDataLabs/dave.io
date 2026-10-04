@@ -19,10 +19,12 @@ The deployed website and chat are working. Submission checks listed below remain
   on October 2, 2026.
 - CloudWatch logs and error alarms are provisioned. Alarm transitions,
   clean-account deployment, and complete teardown are not verified.
-- GitHub Actions CI passes. OIDC roles and the private, versioned S3 state
-  backend are provisioned; existing application state has been migrated and a
-  local release plan reports no changes. Delivery is enabled with a production
-  approval gate. The first complete GitHub release is still being verified.
+- GitHub Actions CI and approval-gated delivery are verified end to end on
+  October 4, 2026: [successful release](https://github.com/SupremeDataLabs/dave.io/actions/runs/37228638822).
+  Both jobs authenticated through OIDC; the saved no-change plan was stored
+  privately in S3 and applied after production approval. Post-apply checks
+  verified the unchanged HTTPS frontend, generated `config.js`, and `/history`.
+  Application state is stored in private, encrypted, versioned S3 with locking.
 
 ## Architecture and choices
 
