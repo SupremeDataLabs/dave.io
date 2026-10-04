@@ -1,0 +1,40 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: '1.15.5'
+          terraform_wrapper: false
+      - name: Unit tests
+        run: |
+          python -m unittest discover -s backend -p 'test_*.py'
+          python -m unittest discover -s scripts -p 'test_*.py'
+      - name: Package and preserve supplied frontend
+        run: |
+          python -c 'import sys; sys.path.insert(0,"scripts"); import deploy; deploy.build_lambda()'
+          python -c 'import hashlib,pathlib; assert hashlib.sha256(pathlib.Path("takehomeassignmentdave_io/index.html").read_bytes()).hexdigest() == "375b79d19c55a9be913c8e51e2ec3b0a08f5a8cb75ed990507e68936c8a02f2a"'
+      - name: Terraform checks (no AWS credentials)
+        run: |
+          terraform fmt -check -recursive infra
+          terraform -chdir=infra init -backend=false -input=false -lockfile=readonly
+          terraform -chdir=infra validate
+          terraform -chdir=infra/bootstrap init -backend=false -input=false -lockfile=readonly
+          terraform -chdir=infra/bootstrap validate

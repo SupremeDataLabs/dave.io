@@ -1,0 +1,77 @@
+name: Deploy
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A waiting approval holds the deployment slot; do not cancel an active apply.
+concurrency:
+  group: production-terraform
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+  plan:
+    needs: checks
+    if: github.ref == 'refs/heads/main' && vars.DEPLOYMENT_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      TF_VAR_llm_key_version: ${{ vars.LLM_KEY_VERSION }}
+      TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+      TF_VAR_llm_model: ${{ vars.LLM_MODEL }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
+        with:
+          terraform_version: '1.15.5'
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@ff717079ee2060e4bcee96c4779b553acc87447c
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - run: python3 scripts/release.py plan
+      - name: Store saved plan privately
+        run: aws s3 cp .build/release.tfplan "s3://$TF_STATE_BUCKET/plans/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.tfplan" --sse AES256 --only-show-errors
+  apply:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      TF_VAR_llm_key_version: ${{ vars.LLM_KEY_VERSION }}
+      TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+      TF_VAR_llm_model: ${{ vars.LLM_MODEL }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
+        with:
+          terraform_version: '1.15.5'
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@ff717079ee2060e4bcee96c4779b553acc87447c
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Download this run's exact saved plan
+        run: |
+          mkdir -p .build
+          aws s3 cp "s3://$TF_STATE_BUCKET/plans/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.tfplan" .build/release.tfplan --only-show-errors
+      - run: python3 scripts/release.py apply

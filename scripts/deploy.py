@@ -103,11 +103,13 @@ def verify_deployment(app_url: str, api_url: str) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument(
         "--enable-chat",
         action="store_true",
         help="Enable POST /chat and prompt privately for the OpenAI API key.",
     )
+    mode.add_argument("--history-only", action="store_true", help="Explicitly disable chat (removes its SSM parameter).")
     args = parser.parse_args()
 
     if not os.environ.get("AWS_PROFILE"):

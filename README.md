@@ -19,7 +19,9 @@ The deployed website and chat are working. Submission checks listed below remain
   on October 2, 2026.
 - CloudWatch logs and error alarms are provisioned. Alarm transitions,
   clean-account deployment, and complete teardown are not verified.
-- No CI/CD deployment workflow is configured yet.
+- GitHub Actions CI and approval-gated delivery workflows are included. Deployment
+  is disabled until OIDC roles, remote-state migration, and a first release are
+  verified. See the CI/CD section for setup and remaining activation checks.
 
 ## Architecture and choices
 
@@ -77,12 +79,91 @@ configuration and history, and prints the HTTPS URL. These readiness checks do
 not prove that chat works. The default model is `gpt-4.1-mini`; set
 `TF_VAR_llm_model` to configure it.
 
-Omitting `--enable-chat` explicitly selects history-only mode; it is not a safe
-way to preserve an already-enabled chat deployment. Keep `--enable-chat` on
-subsequent deployments. For key rotation, also increment `TF_VAR_llm_key_version`.
+The manual script requires an explicit mode: `--enable-chat` or `--history-only`.
+The latter disables chat and removes its parameter; do not use it for an ordinary
+release. For key rotation, also increment `TF_VAR_llm_key_version`.
 Keep that version stable on later deployments; increment it only for another
 rotation. Changing the version refreshes Lambda processes so they do not keep
 using a cached old key. The version is not the secret itself.
+
+## CI/CD: checks, plan, approval, apply
+
+Pull requests run tests, a supplied-HTML checksum check, deterministic packaging,
+and Terraform formatting/validation without cloud credentials. On `main`, the
+delivery workflow runs those checks, creates a plan with the planning role,
+waits for approval in the `production` environment, and applies the exact saved
+plan. A workflow-wide concurrency group serializes releases without cancelling
+an active apply. Remote S3 locking also coordinates CLI operations.
+
+Official actions are pinned to commit SHAs. The workflow does not use
+`pull_request_target`, expose AWS access to fork PRs, or store long-lived AWS
+credentials in GitHub. The planning role trusts only this repository's `main`
+branch. The deployment role trusts only its `production` environment; GitHub's
+environment branch rule must restrict that environment to `main`.
+
+### One-time activation (administrator)
+
+1. Configure GitHub environment `production` with a required reviewer, only
+   `main` allowed, and administrator bypass disabled. This is continuous delivery:
+   a human reviews the plan and approves AWS changes. A solo maintainer must allow
+   self-review; a team should require another reviewer.
+2. Check whether the account already has the GitHub OIDC provider. In bootstrap,
+   set `enable_delivery = true` and `github_repository` to your repository; set
+   `existing_github_oidc_provider_arn` if reusing one. Keep these settings in a
+   private local tfvars file on subsequent bootstrap runs. Review and apply
+   bootstrap using an administrator identity permitted to create the new IAM
+   roles, OIDC provider, and state bucket. The older restricted bootstrap
+   permission set may need an administrator to authorize these new resources.
+3. Freeze manual applies, back up local application state privately, and create
+   the ignored `infra/remote-backend.tf.json` with the following configuration,
+   replacing the bucket with bootstrap's `delivery_state_bucket` output:
+
+   ```json
+   {"terraform":{"backend":{"s3":{
+     "bucket":"YOUR_STATE_BUCKET",
+     "key":"application/terraform.tfstate",
+     "region":"us-east-1",
+     "encrypt":true,
+     "use_lockfile":true
+   }}}}
+   ```
+
+   Run `AWS_PROFILE=YOUR_DEPLOYMENT_PROFILE terraform -chdir=infra init -migrate-state`.
+   Confirm the migration, compare state lineage/resource addresses before and
+   after, and run a plan preserving the current key version. Do not initialize
+   CI against empty state: it must manage the existing deployment, not a duplicate.
+   The bootstrap stack itself remains locally managed; protect its state too.
+4. Set repository variables `AWS_REGION`, `TF_STATE_BUCKET`, `AWS_PLAN_ROLE_ARN`,
+   `AWS_DEPLOY_ROLE_ARN`, `LLM_MODEL`, and `LLM_KEY_VERSION`. The role ARNs come
+   from bootstrap's `github_role_arns`. For the existing demo, the model is
+   `gpt-4.1-mini` and the verified rotation version is `2`; fresh deployments must
+   use their own existing version. No API key is a GitHub variable or secret.
+5. Only after these checks, set `DEPLOYMENT_ENABLED=true`, dispatch **Deploy**
+   on `main`, inspect the plan, approve `production`, and verify the smoke checks.
+
+The state/plan bucket is private, encrypted, versioned, HTTPS-only, outside the
+application provisioning bucket prefix, and protected against Terraform deletion.
+Plans expire after three days and are not uploaded as public-repository Actions
+artifacts. After expiry, create a new plan rather than attempting to approve it.
+
+Routine releases reject deletes/replacements, disabled chat, and changes to the
+SSM parameter. The CI roles explicitly deny parameter-value writes/deletion.
+The AWS provider may read the existing key during refresh, but the nonempty
+ephemeral write-only input keeps its value out of state/plan persistence; CI
+never needs the user to supply the key. Treat plans and state as sensitive anyway.
+Key rotation remains a manual operation; update `LLM_KEY_VERSION` afterward.
+The apply job builds the same deterministic package from the same commit and
+checks HTTPS, frontend bytes, configuration, and `/history`. It does not call
+the paid model or prove browser behavior on every release.
+
+Read-only planning still needs limited state-lock and private-plan writes. These
+are operational storage permissions, not permission to modify the application.
+The deployment role can update Lambda, so it is a trusted privileged identity;
+OIDC alone is not a substitute for review and repository protection.
+
+For interviews: explain the decisions as **untrusted PR checks → short-lived
+planning credentials → reviewed plan → approval-gated deployment → smoke checks**.
+The goal is repeatability and controlled change, not automation for its own sake.
 
 ## API and tests
 
@@ -97,6 +178,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.in
 python3 -m unittest discover -s backend -p 'test_*.py'
+python3 -m unittest discover -s scripts -p 'test_*.py'
 ```
 
 ## Destroy
@@ -118,18 +200,23 @@ Complete teardown is not yet rehearsed. Keep both local Terraform state files
 securely until destruction is verified. Identity Center assignments created
 outside these stacks are not removed by Terraform.
 
+If delivery is enabled, the state bucket is deliberately protected from bootstrap
+destruction. Disable GitHub deployments first; remove the application, securely
+archive/migrate state, and review retirement of the delivery bucket and roles
+separately. Do not remove the state bucket while it is still the active backend.
+
 ## Scaling and remaining work
 
 At 1,000 simultaneous users, API throttles, Lambda concurrency, OpenAI quotas,
 and S3 history listing/read amplification need attention. A next iteration would
 add authentication and per-user history, indexed/paginated history, spending
 controls, improved redacted diagnostics, notification destinations for alarms,
-and CI with short-lived GitHub OIDC credentials rather than stored AWS keys.
+and end-to-end validation of the approval-gated delivery workflow.
 
 Before submission: verify browser history after reload and failure behavior,
 rehearse a clean deployment and teardown, and record actual time spent.
 Actual engineering time has not yet been recorded reliably.
 
-Only this README, Terraform, application/test code, deployment scripts, and
-dependency files are published. The assignment PDF, private planning documents,
+Only this README, Terraform, application/test code, deployment scripts, workflow
+configuration, Git ignore rules, and dependency files are published. The assignment PDF, private planning documents,
 Graphify outputs, local configuration, state, and plans are intentionally omitted.
