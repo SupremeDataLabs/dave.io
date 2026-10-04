@@ -16,6 +16,16 @@ variable "existing_github_oidc_provider_arn" {
   default     = ""
 }
 
+variable "github_oidc_subject_prefix" {
+  description = "Exact repository OIDC sub_claim_prefix reported by GitHub, including immutable owner/repository IDs when enabled."
+  type        = string
+  default     = ""
+  validation {
+    condition     = !var.enable_delivery || can(regex("^repo:[^:*]+/[^:*]+$", var.github_oidc_subject_prefix))
+    error_message = "When delivery is enabled, set GitHub's exact repo:OWNER/REPO or repo:OWNER@ID/REPO@ID subject prefix; wildcards are forbidden."
+  }
+}
+
 locals {
   delivery_roles  = var.enable_delivery ? toset(["plan", "deploy"]) : toset([])
   delivery_policy = jsondecode(aws_iam_role_policy.terraform_deploy.policy)
@@ -101,7 +111,7 @@ resource "aws_iam_role" "github" {
       Principal = { Federated = local.github_provider_arn }
       Condition = { StringEquals = {
         "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
-        "token.actions.githubusercontent.com:sub" = each.key == "plan" ? "repo:${var.github_repository}:ref:refs/heads/main" : "repo:${var.github_repository}:environment:production"
+        "token.actions.githubusercontent.com:sub" = each.key == "plan" ? "${var.github_oidc_subject_prefix}:ref:refs/heads/main" : "${var.github_oidc_subject_prefix}:environment:production"
       } }
     }]
   })

@@ -19,9 +19,10 @@ The deployed website and chat are working. Submission checks listed below remain
   on October 2, 2026.
 - CloudWatch logs and error alarms are provisioned. Alarm transitions,
   clean-account deployment, and complete teardown are not verified.
-- GitHub Actions CI and approval-gated delivery workflows are included. Deployment
-  is disabled until OIDC roles, remote-state migration, and a first release are
-  verified. See the CI/CD section for setup and remaining activation checks.
+- GitHub Actions CI passes. OIDC roles and the private, versioned S3 state
+  backend are provisioned; existing application state has been migrated and a
+  local release plan reports no changes. Delivery is enabled with a production
+  approval gate. The first complete GitHub release is still being verified.
 
 ## Architecture and choices
 
@@ -109,7 +110,12 @@ environment branch rule must restrict that environment to `main`.
    self-review; a team should require another reviewer.
 2. Check whether the account already has the GitHub OIDC provider. In bootstrap,
    set `enable_delivery = true` and `github_repository` to your repository; set
-   `existing_github_oidc_provider_arn` if reusing one. Keep these settings in a
+   `existing_github_oidc_provider_arn` if reusing one. Set
+   `github_oidc_subject_prefix` to the exact `sub_claim_prefix` returned by
+   `gh api repos/OWNER/REPO/actions/oidc/customization/sub`. New repositories use
+   immutable owner/repository IDs in this prefix; using the older name-only
+   format causes AWS authentication to fail. See [GitHub's OIDC reference](https://docs.github.com/en/actions/reference/security/oidc#immutable-subject-claims).
+   Keep these settings in a
    private local tfvars file on subsequent bootstrap runs. Review and apply
    bootstrap using an administrator identity permitted to create the new IAM
    roles, OIDC provider, and state bucket. The older restricted bootstrap
