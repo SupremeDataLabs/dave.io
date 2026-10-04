@@ -1,30 +1,30 @@
 # Dave.io / ask-dave
 
-An AWS serverless chat application provisioned with Terraform. The supplied
-`takehomeassignmentdave_io/index.html` is preserved unchanged; Terraform generates
-the adjacent `config.js` with the deployed API URL.
+I built this chat app on AWS using Terraform. I kept the supplied
+`takehomeassignmentdave_io/index.html` unchanged and generate `config.js` alongside
+it with the deployed API URL.
 
 ## Status
 
-The deployed website and chat are working. Submission checks listed below remain.
+The app is live, and I've tested the chat in the browser. It uses `gpt-4.1-mini`,
+saves each exchange to S3, and loads those exchanges through `/history`.
 
-- Verified on AWS: unchanged frontend over HTTPS, generated configuration, and
-  `GET /history` returning JSON with the correct CORS origin (initially empty).
-- After API key rotation, the live `POST /chat` test returned HTTP 200 using
-  `gpt-4.1-mini`. The earlier HTTP 502 was no longer reproduced. Its original
-  cause was not conclusively identified.
-- Verified that the successful test exchange was persisted and returned by
-  `GET /history`, with the expected browser CORS origin.
-- Browser verification: the project owner confirmed the website and chat work
-  on October 2, 2026.
-- CloudWatch logs and error alarms are provisioned. Alarm transitions,
-  clean-account deployment, and complete teardown are not verified.
-- GitHub Actions CI and approval-gated delivery are verified end to end on
-  October 4, 2026: [successful release](https://github.com/SupremeDataLabs/dave.io/actions/runs/37228638822).
-  Both jobs authenticated through OIDC; the saved no-change plan was stored
-  privately in S3 and applied after production approval. Post-apply checks
-  verified the unchanged HTTPS frontend, generated `config.js`, and `/history`.
-  Application state is stored in private, encrypted, versioned S3 with locking.
+The deployment checks confirm that the original frontend is served over HTTPS,
+`config.js` points to the API, and history returns JSON with the expected CORS
+origin. A live `/chat` request returned HTTP 200, and its response showed up in
+history afterward.
+
+CI/CD is working too. The [first successful release](https://github.com/SupremeDataLabs/dave.io/actions/runs/37228638822)
+completed on October 4, 2026. GitHub authenticated to AWS through OIDC, generated
+a plan with no infrastructure changes, and applied that saved plan after
+production approval. The frontend, configuration, and history checks all passed.
+Terraform state is now in an encrypted, versioned S3 bucket with locking.
+
+CloudWatch logs and error alarms are set up. I still need to test an alarm
+transition, deployment into a clean AWS account, and a full teardown.
+
+One issue during setup was a 502 from `/chat`. After rotating the API key, the
+request succeeded, but I didn't establish the original cause.
 
 ## Architecture and choices
 
@@ -37,15 +37,18 @@ Browser -> API Gateway HTTP API -> Python Lambda -> OpenAI API
 API Gateway / Lambda metrics -> CloudWatch error alarms
 ```
 
-CloudFront provides HTTPS without purchasing a domain. Its default certificate
-does not provide a configurable minimum TLS policy. Origin access control keeps
-the frontend bucket private. Separate buckets isolate frontend assets from chat
-history. Lambda and HTTP API avoid always-on servers; S3 stores individual JSON
-exchanges without an extra database. Storage and other usage can still incur
-charges while the app is idle.
+I chose CloudFront to serve the frontend over HTTPS without needing a custom
+domain. Origin access control keeps its S3 bucket private, and a separate bucket
+holds chat history. The default CloudFront certificate doesn't offer a
+configurable minimum TLS policy.
 
-Lambda has a scoped execution policy and a permissions boundary. A separate
-short-lived deployment role provisions resources. SSM stores the key encrypted;
+Lambda and HTTP API fit the two routes without an always-on server. I used one
+JSON object per exchange in S3 to keep storage simple and avoid adding a database.
+That keeps idle costs low, though storage and other usage can still incur charges.
+
+I separated deployment permissions from Lambda's runtime permissions. Lambda has
+a scoped execution policy and a permissions boundary, while a separate role uses
+temporary credentials to provision resources. SSM stores the key encrypted;
 Terraform uses an ephemeral variable and a write-only parameter value to avoid
 saving it in state or plans. Never commit state, plans, credentials, or API keys.
 
@@ -78,8 +81,8 @@ AWS_PROFILE=YOUR_DEPLOYMENT_PROFILE python3 scripts/deploy.py --enable-chat
 
 Enter the OpenAI key at the hidden prompt, review the saved Terraform plan, and
 confirm. The script builds Lambda, applies the plan, checks frontend bytes,
-configuration and history, and prints the HTTPS URL. These readiness checks do
-not prove that chat works. The default model is `gpt-4.1-mini`; set
+configuration and history, and prints the HTTPS URL. Send a chat message afterward
+to check the LLM connection as well. The default model is `gpt-4.1-mini`; set
 `TF_VAR_llm_model` to configure it.
 
 The manual script requires an explicit mode: `--enable-chat` or `--history-only`.
@@ -169,9 +172,9 @@ are operational storage permissions, not permission to modify the application.
 The deployment role can update Lambda, so it is a trusted privileged identity;
 OIDC alone is not a substitute for review and repository protection.
 
-For interviews: explain the decisions as **untrusted PR checks → short-lived
-planning credentials → reviewed plan → approval-gated deployment → smoke checks**.
-The goal is repeatability and controlled change, not automation for its own sake.
+I kept approval between planning and deployment so I can review the AWS changes
+before they run. Applying the saved plan ensures the deployment matches that
+review. The smoke checks then catch problems with the live frontend and API.
 
 ## API and tests
 
@@ -204,9 +207,9 @@ removed by that script; after application removal, destroy it explicitly:
 AWS_PROFILE=YOUR_BOOTSTRAP_PROFILE terraform -chdir=infra/bootstrap destroy
 ```
 
-Complete teardown is not yet rehearsed. Keep both local Terraform state files
-securely until destruction is verified. Identity Center assignments created
-outside these stacks are not removed by Terraform.
+I haven't rehearsed a complete teardown yet. Keep the application state and the
+local bootstrap state until cleanup is verified. Identity Center assignments
+created outside these stacks are not removed by Terraform.
 
 If delivery is enabled, the state bucket is deliberately protected from bootstrap
 destruction. Disable GitHub deployments first; remove the application, securely
@@ -215,16 +218,16 @@ separately. Do not remove the state bucket while it is still the active backend.
 
 ## Scaling and remaining work
 
-At 1,000 simultaneous users, API throttles, Lambda concurrency, OpenAI quotas,
-and S3 history listing/read amplification need attention. A next iteration would
-add authentication and per-user history, indexed/paginated history, spending
-controls, improved redacted diagnostics, notification destinations for alarms,
-and end-to-end validation of the approval-gated delivery workflow.
+At 1,000 simultaneous users, I'd look first at API throttling, Lambda concurrency,
+OpenAI quotas, and the cost of listing and reading history objects from S3.
+I haven't load-tested that scenario, so these are expected limits rather than
+measured bottlenecks.
 
-Before submission: verify browser history after reload and failure behavior,
-rehearse a clean deployment and teardown, and record actual time spent.
-Actual engineering time has not yet been recorded reliably.
+With another week, I'd add authentication and per-user history, then indexed,
+paginated history so each reload doesn't need to read individual S3 objects.
+I'd also add spending controls, better diagnostics with sensitive data removed,
+and notification destinations for the alarms.
 
-Only this README, Terraform, application/test code, deployment scripts, workflow
-configuration, Git ignore rules, and dependency files are published. The assignment PDF, private planning documents,
-Graphify outputs, local configuration, state, and plans are intentionally omitted.
+The remaining testing work is a clean-account deployment and teardown, browser
+history after a reload, and controlled failure tests. I haven't kept a reliable
+record of hands-on time, so I don't have an accurate hours estimate yet.
