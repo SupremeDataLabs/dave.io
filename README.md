@@ -28,14 +28,9 @@ request succeeded, but I didn't establish the original cause.
 
 ## Architecture and choices
 
-```text
-Browser -> CloudFront (HTTPS) -> private S3 frontend bucket
-Browser -> API Gateway HTTP API -> Python Lambda -> OpenAI API
-                                      |-> SSM SecureString (API key)
-                                      |-> private S3 history bucket
-                                      |-> CloudWatch logs
-API Gateway / Lambda metrics -> CloudWatch error alarms
-```
+![Dave.io AWS serverless architecture](docs/architecture.png)
+
+S3 stores the chat exchanges; `/history` returns the latest 80 records.
 
 I chose CloudFront to serve the frontend over HTTPS without needing a custom
 domain. Origin access control keeps its S3 bucket private, and a separate bucket
