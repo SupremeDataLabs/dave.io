@@ -53,6 +53,11 @@ saving it in state or plans. Never commit state, plans, credentials, or API keys
 You need Terraform 1.11 or newer (below 2.0), Python 3.10+, AWS CLI v2, an AWS
 account, and a funded OpenAI API key. The default region is `us-east-1`.
 
+Before bootstrap, make sure IAM Identity Center is enabled and the permission set
+`ask-dave-TerraformAccess` exists and is assigned to the person who will deploy
+(or set a different name in bootstrap). Terraform creates the AWS deployment role,
+but it does not create or assign the Identity Center permission set.
+
 For a fresh account, an administrator first creates the deployment role and its
 permissions boundary. Use temporary administrator credentials for this one-time
 bootstrap—never root access keys:
@@ -197,7 +202,8 @@ AWS_PROFILE=YOUR_DEPLOYMENT_PROFILE python3 scripts/destroy.py
 ```
 
 Destruction permanently deletes chat history. The separate bootstrap is not
-removed by that script; after application removal, destroy it explicitly:
+removed by that script. If GitHub delivery has never been enabled, you can remove
+the bootstrap stack after the application:
 
 ```bash
 AWS_PROFILE=YOUR_BOOTSTRAP_PROFILE terraform -chdir=infra/bootstrap destroy
@@ -207,10 +213,11 @@ I haven't rehearsed a complete teardown yet. Keep the application state and the
 local bootstrap state until cleanup is verified. Identity Center assignments
 created outside these stacks are not removed by Terraform.
 
-If delivery is enabled, the state bucket is deliberately protected from bootstrap
-destruction. Disable GitHub deployments first; remove the application, securely
-archive/migrate state, and review retirement of the delivery bucket and roles
-separately. Do not remove the state bucket while it is still the active backend.
+If GitHub delivery is enabled, do not run the generic bootstrap destroy command:
+the remote-state bucket has deletion protection, and it may still hold active
+Terraform state. Disable GitHub deployments, preserve or migrate the state, then
+review retirement of the delivery bucket and roles as a separate operation. This
+delivery-enabled teardown path has not been rehearsed.
 
 ## Scaling and remaining work
 
@@ -225,5 +232,7 @@ I'd also add spending controls, better diagnostics with sensitive data removed,
 and notification destinations for the alarms.
 
 The remaining testing work is a clean-account deployment and teardown, browser
-history after a reload, and controlled failure tests. I haven't kept a reliable
-record of hands-on time, so I don't have an accurate hours estimate yet.
+history after a reload, and controlled failure tests.
+
+My rough estimate is 5–6 hours of focused implementation and testing, with AI
+assistance.
