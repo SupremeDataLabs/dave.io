@@ -1,8 +1,13 @@
 # Dave.io / ask-dave
 
-I built this chat app on AWS using Terraform. I kept the supplied
-`takehomeassignmentdave_io/index.html` unchanged and generate `config.js` alongside
-it with the deployed API URL.
+I built this chat app on AWS with Terraform. The supplied
+`takehomeassignmentdave_io/index.html` is unchanged; deployment generates the
+adjacent `config.js` with the API URL.
+
+**Quick review:** start with [status](#status), then [architecture](#architecture-and-choices).
+To deploy it in another AWS account, follow [first-time setup](#first-time-setup)
+and [deploy](#deploy). The first setup requires an AWS administrator; routine
+deployments use a scoped role, not root credentials.
 
 ## Status
 
@@ -23,9 +28,6 @@ Terraform state is now in an encrypted, versioned S3 bucket with locking.
 CloudWatch logs and error alarms are set up. I still need to test an alarm
 transition, deployment into a clean AWS account, and a full teardown.
 
-One issue during setup was a 502 from `/chat`. After rotating the API key, the
-request succeeded, but I didn't establish the original cause.
-
 ## Architecture and choices
 
 ![Dave.io AWS serverless architecture](docs/architecture.png)
@@ -34,8 +36,7 @@ S3 stores the chat exchanges; `/history` returns the latest 80 records.
 
 I chose CloudFront to serve the frontend over HTTPS without needing a custom
 domain. Origin access control keeps its S3 bucket private, and a separate bucket
-holds chat history. The default CloudFront certificate doesn't offer a
-configurable minimum TLS policy.
+holds chat history.
 
 Lambda and HTTP API fit the two routes without an always-on server. I used one
 JSON object per exchange in S3 to keep storage simple and avoid adding a database.
@@ -47,26 +48,26 @@ temporary credentials to provision resources. SSM stores the key encrypted;
 Terraform uses an ephemeral variable and a write-only parameter value to avoid
 saving it in state or plans. Never commit state, plans, credentials, or API keys.
 
-## Prerequisites and bootstrap
+## First-time setup
 
-- Terraform 1.11 or newer (below 2.0), Python 3.10+, and AWS CLI v2.
-- Your own AWS account, authenticated CLI profiles, and funded OpenAI API key.
-- An IAM Identity Center permission set allowed to assume the deployment role.
-  Its name defaults to `ask-dave-TerraformAccess` and is configurable in bootstrap.
+You need Terraform 1.11 or newer (below 2.0), Python 3.10+, AWS CLI v2, an AWS
+account, and a funded OpenAI API key. The default region is `us-east-1`.
 
-The application assumes the permissions boundary created by `infra/bootstrap`.
-An administrator must bootstrap it first, using temporary credentials:
+For a fresh account, an administrator first creates the deployment role and its
+permissions boundary. Use temporary administrator credentials for this one-time
+bootstrap—never root access keys:
 
 ```bash
 AWS_PROFILE=YOUR_BOOTSTRAP_PROFILE terraform -chdir=infra/bootstrap init
 AWS_PROFILE=YOUR_BOOTSTRAP_PROFILE terraform -chdir=infra/bootstrap apply
 ```
 
-Configure a deployment CLI profile to assume the output `deployment_role_arn`
-using your Identity Center source profile. Do not use root access keys.
-The local profile names `Dave.io` and `Dave.io-bootstrap` are examples, not
-portable credentials. The default region is `us-east-1`; configure both stacks
-consistently if changing it.
+Next, configure a CLI profile to assume the bootstrap output `deployment_role_arn`
+through your IAM Identity Center source profile. The permission set defaults to
+`ask-dave-TerraformAccess` (configurable in bootstrap). Use that deployment profile
+for the application command below. `Dave.io` and `Dave.io-bootstrap` are local
+profile-name examples, not portable credentials. If you change regions, configure
+both Terraform stacks consistently.
 
 ## Deploy
 
@@ -80,29 +81,32 @@ configuration and history, and prints the HTTPS URL. Send a chat message afterwa
 to check the LLM connection as well. The default model is `gpt-4.1-mini`; set
 `TF_VAR_llm_model` to configure it.
 
-The manual script requires an explicit mode: `--enable-chat` or `--history-only`.
-The latter disables chat and removes its parameter; do not use it for an ordinary
-release. For key rotation, also increment `TF_VAR_llm_key_version`.
-Keep that version stable on later deployments; increment it only for another
-rotation. Changing the version refreshes Lambda processes so they do not keep
-using a cached old key. The version is not the secret itself.
+For key rotation, increment `TF_VAR_llm_key_version` when deploying the new key;
+keep it unchanged on ordinary releases. The version is not the secret itself.
 
 ## CI/CD: checks, plan, approval, apply
 
 Pull requests run tests, a supplied-HTML checksum check, deterministic packaging,
-and Terraform formatting/validation without cloud credentials. On `main`, the
-delivery workflow runs those checks, creates a plan with the planning role,
-waits for approval in the `production` environment, and applies the exact saved
-plan. A workflow-wide concurrency group serializes releases without cancelling
-an active apply. Remote S3 locking also coordinates CLI operations.
+and Terraform formatting/validation without cloud credentials. On `main`, GitHub
+uses OIDC to create a Terraform plan, pauses for production approval, then applies
+that exact plan. The workflow smoke-checks the frontend, generated config, and
+`/history`; it does not call the paid model or verify browser behavior on every
+release. The first successful release is recorded [here](https://github.com/SupremeDataLabs/dave.io/actions/runs/37228638822).
+
+The details below are for someone enabling delivery in a fresh repository/account.
+They are not needed to review the app or run a local deployment.
+
+<details>
+<summary>One-time GitHub Actions and remote-state setup (administrator)</summary>
+
+The workflow serializes releases without cancelling an active apply; S3 locking
+also coordinates CLI operations.
 
 Official actions are pinned to commit SHAs. The workflow does not use
 `pull_request_target`, expose AWS access to fork PRs, or store long-lived AWS
 credentials in GitHub. The planning role trusts only this repository's `main`
 branch. The deployment role trusts only its `production` environment; GitHub's
 environment branch rule must restrict that environment to `main`.
-
-### One-time activation (administrator)
 
 1. Configure GitHub environment `production` with a required reviewer, only
    `main` allowed, and administrator bypass disabled. This is continuous delivery:
@@ -118,8 +122,7 @@ environment branch rule must restrict that environment to `main`.
    Keep these settings in a
    private local tfvars file on subsequent bootstrap runs. Review and apply
    bootstrap using an administrator identity permitted to create the new IAM
-   roles, OIDC provider, and state bucket. The older restricted bootstrap
-   permission set may need an administrator to authorize these new resources.
+   roles, OIDC provider, and state bucket.
 3. Freeze manual applies, back up local application state privately, and create
    the ignored `infra/remote-backend.tf.json` with the following configuration,
    replacing the bucket with bootstrap's `delivery_state_bucket` output:
@@ -167,9 +170,7 @@ are operational storage permissions, not permission to modify the application.
 The deployment role can update Lambda, so it is a trusted privileged identity;
 OIDC alone is not a substitute for review and repository protection.
 
-I kept approval between planning and deployment so I can review the AWS changes
-before they run. Applying the saved plan ensures the deployment matches that
-review. The smoke checks then catch problems with the live frontend and API.
+</details>
 
 ## API and tests
 
